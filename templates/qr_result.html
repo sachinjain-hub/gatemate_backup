@@ -1,0 +1,43 @@
+<!-- templates/qr_result.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Gate Pass Verification</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 30px; }
+        .card {
+            max-width: 450px;
+            margin: 0 auto;
+            padding: 25px;
+            border-radius: 16px;
+            box-shadow: 0 0 14px rgba(0,0,0,0.1);
+        }
+        .status-valid { color: #0a8a0a; }
+        .status-expired, .status-invalid, .status-used { color: #c0392b; }
+        .label { font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="card">
+    {% if status == 'valid' %}
+        <h2 class="status-valid">✅ Gate Pass Verified</h2>
+    {% elif status == 'expired' %}
+        <h2 class="status-expired">⛔ QR Code Expired</h2>
+    {% elif status == 'used' %}
+        <h2 class="status-used">⚠️ QR Already Used</h2>
+    {% else %}
+        <h2 class="status-invalid">❌ Invalid QR Code</h2>
+    {% endif %}
+
+    <p>{{ msg }}</p>
+
+    {% if gate_req %}
+        <p><span class="label">Student:</span> {{ gate_req.student_name }}</p>
+        <p><span class="label">Reason:</span> {{ gate_req.reason }}</p>
+        <p><span class="label">Approved By:</span> {{ gate_req.hod_name }}</p>
+        <p><span class="label">QR Expiry Time (UTC):</span> {{ gate_req.qr_expires_at }}</p>
+    {% endif %}
+</div>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Gate Pass QR Code</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+        .card {
+            max-width: 400px;
+            margin: 0 auto;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 0 12px rgba(0,0,0,0.1);
+        }
+        img { margin-top: 15px; width: 250px; height: 250px; }
+        .info { margin-top: 10px; font-size: 14px; color: #555; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h2>Gate Pass Approved ✅</h2>
+
+    <p>Request ID: <b>#{{ request_id }}</b></p>
+    <p>Student: <b>{{ student_name }}</b></p>
+    <p>Reason: <b>{{ reason }}</b></p>
+    <p>Out Date & Time: <b>{{ out_date }} {{ out_time }}</b></p>
+    <p>Valid till: <b>{{ qr_expires_at }}</b></p>
+
+    <!-- QR Image -->
+    <img src="data:image/png;base64,{{ qr_code_data }}" alt="QR Code">
+
+    <div class="info">
+        <p>Scan this QR code at the college gate within 20 minutes.</p>
+        <p>Verification Link: <br><small>{{ verify_url }}</small></p>
+    </div>
+</div>
+</body>
+</html>

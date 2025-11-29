@@ -1,0 +1,8 @@
+Flask
+Flask-WTF
+wtforms
+bcrypt
+Flask-MySQLdb
+qrcode
+twilio
+gunicorn

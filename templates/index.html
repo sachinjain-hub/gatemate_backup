@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GATEMATE - Login</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        /* Clear, High-Quality Background */
+        body {
+            background: url("/static/iist_image2.jpeg") no-repeat center center;
+            background-size: cover;
+            height: 100vh;
+            color: white;
+        }
+
+        /* Transparent Navbar */
+        .navbar {
+            width: 100%;
+            padding: 15px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: fixed;
+            top: 0;
+            background: rgba(0,0,0,0.4);
+        }
+
+        .navbar a {
+            margin-left: 20px;
+            font-size: 16px;
+            color: white;
+            text-decoration: none;
+            font-weight: 400;
+        }
+
+        .navbar a:hover {
+            text-decoration: underline;
+        }
+
+        /* Glassmorphism Login Box */
+        .container {
+            width: 380px;
+            background: rgba(108, 20, 20, 0.15);
+            backdrop-filter: blur(10px);
+            padding: 30px;
+            border-radius: 20px;
+            margin: 120px auto;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+        }
+
+        .container h2 {
+            text-align: center;
+            margin-bottom: 25px;
+            color: white;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 10px;
+            border: 1px solid #ddd;
+            outline: none;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #2438FF;
+            color: white;
+            border: none;
+            font-size: 17px;
+            border-radius: 10px;
+            cursor: pointer;
+            margin-top: 15px;
+        }
+
+        button:hover {
+            background: #1b2ed8;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            font-size: 14px;
+            color: #fff;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Navbar -->
+    <div class="navbar">
+        <h2>GATEMATE</h2>
+        <div>
+            <a href="#">Home</a>
+            <a href="#">About College</a>
+            <a href="#">Contact</a>
+            <a href="#">Help</a>
+        </div>
+    </div>
+
+    <!-- Glass Login Form -->
+    <div class="container">
+        <h2>Login</h2>
+
+        <form action="/login" method="POST">
+            <label>Email:</label>
+            <input type="email" name="email" required>
+
+            <label>Password:</label>
+            <input type="password" name="password" required>
+
+            <button type="submit">Login</button>
+        </form>
+    </div>
+
+    <footer>
+        © 2025 GATEMATE | All Rights Reserved
+    </footer>
+
+</body>
+</html>

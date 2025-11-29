@@ -1,0 +1,8 @@
+<form action="/register" method="POST">
+    {{ form.hidden_tag() }}
+    {{ form.name.label }} {{ form.name() }} <br><br>
+    {{ form.email.label }} {{ form.email() }} <br><br>
+    {{ form.password.label }} {{ form.password() }} <br><br>
+    {{ form.parents_phone.label }} {{ form.parents_phone() }} <br><br>
+    {{ form.submit() }}
+</form>

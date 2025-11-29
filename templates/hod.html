@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>HOD Dashboard</title>
+</head>
+<body>
+<h2>HOD Dashboard</h2>
+
+<p>Welcome, HOD!</p>
+
+<h3>All Gate Pass Requests</h3>
+
+{% if all_requests %}
+<table border="1" cellpadding="5" cellspacing="0">
+    <tr>
+        <th>#</th>
+        <th>Request ID</th>
+        <th>Student ID</th>
+        <th>Student Name</th>
+        <th>Reason</th>
+        <th>Out Date</th>
+        <th>Out Time</th>
+        <th>Status</th>
+        <th>Requested At</th>
+        <th>Action</th>
+    </tr>
+    {% for r in all_requests %}
+    <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ r[0] }}</td> <!-- g.id -->
+        <td>{{ r[1] }}</td> <!-- student_id -->
+        <td>{{ r[2] }}</td> <!-- student_name -->
+        <td>{{ r[3] }}</td> <!-- reason -->
+        <td>{{ r[4] }}</td> <!-- out_date -->
+        <td>{{ r[5] }}</td> <!-- out_time -->
+        <td>{{ r[6] }}</td> <!-- status -->
+        <td>{{ r[7] }}</td> <!-- created_at -->
+        <td>
+            {% if r[6] == 'Pending' %}
+            <form method="POST"
+                  action="{{ url_for('update_request_status', request_id=r[0]) }}"
+                  style="display:inline;">
+                <button type="submit" name="action" value="Approved">Approve</button>
+            </form>
+            <form method="POST"
+                  action="{{ url_for('update_request_status', request_id=r[0]) }}"
+                  style="display:inline;">
+                <button type="submit" name="action" value="Rejected">Reject</button>
+            </form>
+            {% else %}
+                {{ r[6] }}
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No requests yet.</p>
+{% endif %}
+
+<p><a href="{{ url_for('logout') }}">Logout</a></p>
+</body>
+</html>
