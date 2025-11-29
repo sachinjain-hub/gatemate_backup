@@ -6,3 +6,4 @@ Flask-MySQLdb
 qrcode
 twilio
 gunicorn
+os
