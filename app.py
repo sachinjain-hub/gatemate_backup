@@ -27,10 +27,10 @@ from twilio.rest import Client
 app = Flask(__name__)
 
 # ================== MYSQL CONFIG ==================
-app.config['MYSQL_HOST'] = os.environ.get('MYSQL_HOST', 'localhost')
-app.config['MYSQL_USER'] = os.environ.get('MYSQL_USER', 'root')
-app.config['MYSQL_PASSWORD'] = os.environ.get('MYSQL_PASSWORD', 'root')
-app.config['MYSQL_DB'] = os.environ.get('MYSQL_DB', 'minor')
+app.config['MYSQL_HOST'] = os.environ.get('localhost')
+app.config['MYSQL_USER'] = os.environ.get('root')
+app.config['MYSQL_PASSWORD'] = os.environ.get('root')
+app.config['MYSQL_DB'] = os.environ.get('minor')
 
 # Flask-WTF / Session secret key
 app.secret_key = 'sk'
