@@ -295,6 +295,9 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
+with app.app_context():
+    db.create_all()
+
 # =====================================================
 # MAIN
 # =====================================================
