@@ -26,12 +26,12 @@ app = Flask(__name__)
 
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev")
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://")
+DATABASEURL = os.environ.get("DATABASEURL")
+if DATABASEURL and DATABASEURL.startswith("postgres://"):
+    DATABASEURL = DATABASEURL.replace("postgres://", "postgresql://")
 
-app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SQLALCHEMYDATABASEURI"] = DATABASEURL
+app.config["SQLALCHEMYTRACKMODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
@@ -39,11 +39,11 @@ migrate = Migrate(app, db)
 # =====================================================
 # TWILIO CONFIG
 # =====================================================
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
-TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER")
+TWILIOACCOUNTSID = os.environ.get("TWILIOACCOUNTSID")
+TWILIOAUTHTOKEN = os.environ.get("TWILIOAUTHTOKEN")
+TWILIOFROMNUMBER = os.environ.get("TWILIOFROMNUMBER")
 
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+twilio_client = Client(TWILIOACCOUNTSID, TWILIOAUTHTOKEN)
 
 # =====================================================
 # DATABASE MODELS
