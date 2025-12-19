@@ -1,578 +1,271 @@
-from flask import (
-    Flask,
-    render_template,
-    redirect,
-    url_for,
-    flash,
-    request,
-    session
-)
-from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, SubmitField
-from wtforms.validators import DataRequired, Email
-import bcrypt
-from flask_mysqldb import MySQL
+import os
 import random
-
-# === NEW IMPORTS FOR QR ===
-import qrcode
 import io
 import base64
 from uuid import uuid4
 from datetime import datetime, timedelta
-import os
-# Twilio import
+
+from flask import (
+    Flask, render_template, redirect,
+    url_for, flash, request, session
+)
+from flask_wtf import FlaskForm
+from wtforms import StringField, PasswordField, SubmitField
+from wtforms.validators import DataRequired, Email
+
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
+import bcrypt
+import qrcode
 from twilio.rest import Client
 
+# =====================================================
+# APP CONFIG
+# =====================================================
 app = Flask(__name__)
 
-# ================== MYSQL CONFIG ==================
-app.config['MYSQL_HOST'] = os.environ.get('MYSQL_HOST')
-app.config['MYSQL_USER'] = os.environ.get('MYSQL_USER')
-app.config['MYSQL_PASSWORD'] = os.environ.get('MYSQL_PASSWORD')
-app.config['MYSQL_DB'] = os.environ.get('MYSQL_DB')
-app.config['MYSQL_PORT'] = (os.environ.get('MYSQL_PORT'))
-# Flask-WTF / Session secret key
-app.secret_key = 'sk'
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev")
 
-mysql = MySQL(app)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://")
 
-# ================== TWILIO CONFIG ==================
-import os
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
+db = SQLAlchemy(app)
+migrate = Migrate(app, db)
+
+# =====================================================
+# TWILIO CONFIG
+# =====================================================
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
 TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER")
-app.secret_key = os.environ.get("SECRET_KEY", "dev")
-
 
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
+# =====================================================
+# DATABASE MODELS
+# =====================================================
+class User(db.Model):
+    __tablename__ = "users"
 
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password = db.Column(db.String(255), nullable=False)
+    parents_phone = db.Column(db.String(20))
+    role = db.Column(db.String(20), default="student")
+
+    requests = db.relationship("GatePassRequest", backref="student", lazy=True)
+
+
+class GatePassRequest(db.Model):
+    __tablename__ = "gate_pass_requests"
+
+    id = db.Column(db.Integer, primary_key=True)
+    student_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    student_name = db.Column(db.String(120))
+    reason = db.Column(db.Text)
+    out_date = db.Column(db.String(20))
+    out_time = db.Column(db.String(20))
+    status = db.Column(db.String(20), default="Pending")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    qr_token = db.Column(db.String(100), unique=True)
+    qr_expires_at = db.Column(db.DateTime)
+    qr_used = db.Column(db.Boolean, default=False)
+
+# =====================================================
+# FORMS
+# =====================================================
+class RegisterForm(FlaskForm):
+    name = StringField("Name", validators=[DataRequired()])
+    email = StringField("Email", validators=[DataRequired(), Email()])
+    password = PasswordField("Password", validators=[DataRequired()])
+    parents_phone = StringField("Parent Phone", validators=[DataRequired()])
+    submit = SubmitField("Register")
+
+# =====================================================
+# HELPERS
+# =====================================================
 def send_sms(phone, message):
-    """
-    Send SMS using Twilio.
-    `phone` must be in E.164 format: e.g. +91XXXXXXXXXX
-    """
     try:
         twilio_client.messages.create(
             body=message,
             from_=TWILIO_FROM_NUMBER,
             to=phone
         )
-        print(f"SMS sent to {phone}: {message}")
     except Exception as e:
-        # App crash na ho, bas log print ho jaye
-        print("Twilio SMS error:", e)
+        print("Twilio Error:", e)
 
 
-# ============== QR HELPER ==============
-def generate_qr_code(data: str) -> str:
-    """
-    Given a string (usually a URL), returns base64-encoded PNG of QR code.
-    """
-    qr = qrcode.QRCode(box_size=10, border=4)
+def generate_qr_code(data):
+    qr = qrcode.QRCode(box_size=8, border=3)
     qr.add_data(data)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    qr_bytes = buf.getvalue()
-    qr_b64 = base64.b64encode(qr_bytes).decode("utf-8")
-    return qr_b64
+    return base64.b64encode(buf.getvalue()).decode()
 
-
-# ================== FORMS ==================
-class RegisterForm(FlaskForm):
-    name = StringField("Name", validators=[DataRequired()])
-    email = StringField("Email", validators=[DataRequired(), Email()])
-    password = PasswordField("Password", validators=[DataRequired()])
-    parents_phone = StringField("Parent's Phone", validators=[DataRequired()])
-    submit = SubmitField("Register")
-
-
-# ================== ROUTES ==================
-
-@app.route('/')
+# =====================================================
+# ROUTES
+# =====================================================
+@app.route("/")
 def index():
-    return render_template('index.html')
+    return render_template("index.html")
 
 
-# ---------- REGISTER ----------
-@app.route('/register', methods=['GET', 'POST'])
+@app.route("/register", methods=["GET", "POST"])
 def register():
     form = RegisterForm()
     if form.validate_on_submit():
-        name = form.name.data
-        email = form.email.data
-        password = form.password.data
-        parents_phone = form.parents_phone.data.strip()
+        phone = form.parents_phone.data.strip()
+        if not phone.startswith("+"):
+            phone = "+91" + phone
 
-        # Ensure +91 format
-        if parents_phone.startswith("0"):
-            parents_phone = parents_phone[1:]
-        if not parents_phone.startswith("+"):
-            parents_phone = "+91" + parents_phone  # India assume kar raha hu
+        hashed = bcrypt.hashpw(
+            form.password.data.encode(), bcrypt.gensalt()
+        ).decode()
 
-        hashed_password = bcrypt.hashpw(
-            password.encode('utf-8'),
-            bcrypt.gensalt()
-        ).decode('utf-8')
-
-        cur = mysql.connection.cursor()
-        cur.execute(
-            """
-            INSERT INTO users (name, email, password, parents_phone)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (name, email, hashed_password, parents_phone)
+        user = User(
+            name=form.name.data,
+            email=form.email.data,
+            password=hashed,
+            parents_phone=phone
         )
-        mysql.connection.commit()
-        cur.close()
+        db.session.add(user)
+        db.session.commit()
 
-        flash("Registration successful. Please login.", "success")
-        return redirect(url_for('login'))
+        flash("Registration successful", "success")
+        return redirect(url_for("login"))
 
-    return render_template('register.html', form=form)
+    return render_template("register.html", form=form)
 
 
-# ---------- LOGIN ----------
-@app.route('/login', methods=['GET', 'POST'])
+@app.route("/login", methods=["GET", "POST"])
 def login():
-    if request.method == 'POST':
-        email = request.form.get('email')
-        password = request.form.get('password')
+    if request.method == "POST":
+        user = User.query.filter_by(email=request.form["email"]).first()
+        if user and bcrypt.checkpw(
+            request.form["password"].encode(),
+            user.password.encode()
+        ):
+            session["user_id"] = user.id
+            session["role"] = user.role
+            session["name"] = user.name
+            return redirect(url_for("hod_dashboard" if user.role == "hod" else "student"))
 
-        cur = mysql.connection.cursor()
-        cur.execute(
-            "SELECT id, name, password, role FROM users WHERE email = %s",
-            (email,)
-        )
-        user = cur.fetchone()
-        cur.close()
-
-        if user:
-            user_id = user[0]
-            user_name = user[1]
-            stored_hash = user[2]
-            role = user[3] if len(user) > 3 and user[3] else 'student'
-
-            if bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
-                session['email'] = email
-                session['student_id'] = user_id
-                session['student_name'] = user_name
-                session['role'] = role
-
-                flash("Login successful!", "success")
-
-                if role == 'hod':
-                    return redirect(url_for('hod_dashboard'))
-                else:
-                    return redirect(url_for('student'))
-            else:
-                flash("Incorrect password!", "danger")
-        else:
-            flash("Email not found!", "danger")
-
-    return render_template('login.html')
+        flash("Invalid credentials", "danger")
+    return render_template("login.html")
 
 
-# ---------- STUDENT DASHBOARD (OTP + QR VIEW) ----------
-@app.route('/student', methods=['GET', 'POST'])
+@app.route("/student", methods=["GET", "POST"])
 def student():
-    if 'email' not in session:
-        flash("Please login first.", "warning")
-        return redirect(url_for('login'))
+    if "user_id" not in session:
+        return redirect(url_for("login"))
 
-    email = session['email']
+    user = User.query.get(session["user_id"])
 
-    # user se id, name, parents_phone lo
-    cur = mysql.connection.cursor()
-    cur.execute("SELECT id, name, parents_phone FROM users WHERE email = %s", (email,))
-    user = cur.fetchone()
-    cur.close()
+    if request.method == "POST":
+        if session.get("otp_phase"):
+            if request.form["otp"] != str(session["otp"]):
+                flash("Invalid OTP", "danger")
+                return redirect(url_for("student"))
 
-    if not user:
-        session.clear()
-        flash("User not found. Please login again.", "danger")
-        return redirect(url_for('login'))
-
-    student_id = user[0]
-    student_name = user[1]
-    parents_phone = user[2]
-
-    otp_phase = session.get('otp_phase', False)
-
-    if request.method == 'POST':
-        # Agar already OTP phase me hain -> ab OTP verify hoga
-        if otp_phase:
-            entered_otp = request.form.get('otp')
-            real_otp = session.get('otp')
-            pending = session.get('pending_request')
-
-            if not real_otp or not pending:
-                flash("Session expired. Please fill the form again.", "warning")
-                session.pop('otp_phase', None)
-                session.pop('otp', None)
-                session.pop('pending_request', None)
-                return redirect(url_for('student'))
-
-            if entered_otp != str(real_otp):
-                flash("Invalid OTP, please try again.", "danger")
-                return redirect(url_for('student'))
-
-            # OTP correct – insert request
-            reason = pending['reason']
-            out_date = pending['out_date']
-            out_time = pending['out_time']
-
-            cur = mysql.connection.cursor()
-            cur.execute(
-                """
-                INSERT INTO gate_pass_requests
-                    (student_id, student_name, reason, out_date, out_time)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (student_id, student_name, reason, out_date, out_time)
+            req = GatePassRequest(
+                student_id=user.id,
+                student_name=user.name,
+                **session["pending"]
             )
-            mysql.connection.commit()
-            cur.close()
+            db.session.add(req)
+            db.session.commit()
 
-            # Clean up OTP state
-            session.pop('otp_phase', None)
-            session.pop('otp', None)
-            session.pop('pending_request', None)
-
-            flash("Gate pass request submitted after OTP verification!", "success")
-            return redirect(url_for('student'))
-
-        # ---------- First submit: generate & send OTP ----------
-        reason = request.form.get('reason')
-        out_date = request.form.get('out_date')
-        out_time = request.form.get('out_time')
-
-        if not reason or not out_date or not out_time:
-            flash("Please fill all fields", "danger")
-            return redirect(url_for('student'))
+            session.pop("otp_phase")
+            flash("Gate pass submitted", "success")
+            return redirect(url_for("student"))
 
         otp = random.randint(100000, 999999)
-
-        session['otp_phase'] = True
-        session['otp'] = otp
-        session['pending_request'] = {
-            'reason': reason,
-            'out_date': out_date,
-            'out_time': out_time
+        session["otp"] = otp
+        session["otp_phase"] = True
+        session["pending"] = {
+            "reason": request.form["reason"],
+            "out_date": request.form["out_date"],
+            "out_time": request.form["out_time"]
         }
 
-        # Twilio se parent ko OTP bhejna
-        message = f"OTP for gate pass request of {student_name} is {otp}."
-        send_sms(parents_phone, message)
-        flash("OTP sent to your parent's registered mobile number. Please enter OTP to confirm.", "info")
-        return redirect(url_for('student'))
+        send_sms(user.parents_phone, f"OTP for gate pass: {otp}")
+        flash("OTP sent to parent", "info")
+        return redirect(url_for("student"))
 
-    # ========== GET: display student's requests + QR if Approved ==========
-    cur = mysql.connection.cursor()
-    cur.execute(
-        """
-        SELECT id,
-               reason,
-               out_date,
-               out_time,
-               status,
-               created_at,
-               qr_token,
-               qr_expires_at,
-               qr_used
-        FROM gate_pass_requests
-        WHERE student_id = %s
-        ORDER BY created_at DESC
-        """,
-        (student_id,)
-    )
-    rows = cur.fetchall()
-    cur.close()
+    requests = GatePassRequest.query.filter_by(student_id=user.id).all()
+    now = datetime.utcnow()
 
-    # Convert rows -> list of dicts + generate QR for valid approved requests
-    requests_list = []
-    now = datetime.now()
+    data = []
+    for r in requests:
+        qr = None
+        if r.status == "Approved" and r.qr_token and not r.qr_used and r.qr_expires_at > now:
+            url = url_for("verify_qr", token=r.qr_token, _external=True)
+            qr = generate_qr_code(url)
+        data.append({"r": r, "qr": qr})
 
-    for row in rows:
-        (req_id,
-         reason,
-         out_date,
-         out_time,
-         status,
-         created_at,
-         qr_token,
-         qr_expires_at,
-         qr_used) = row
-
-        qr_code_data = None
-
-        # QR tab hi dikhao jab:
-        # - status Approved ho
-        # - token ho
-        # - QR expire na hua ho
-        # - abhi tak use na hua ho
-        if (
-            status == 'Approved' and
-            qr_token and
-            qr_expires_at and
-            not qr_used and
-            now <= qr_expires_at
-        ):
-            verify_url = url_for("verify_qr", token=qr_token, _external=True)
-            qr_code_data = generate_qr_code(verify_url)
-
-        requests_list.append({
-            "id": req_id,
-            "reason": reason,
-            "out_date": out_date,
-            "out_time": out_time,
-            "status": status,
-            "created_at": created_at,
-            "qr_code_data": qr_code_data,
-            "qr_expires_at": qr_expires_at,
-            "qr_used": qr_used
-        })
-
-    otp_required = session.get('otp_phase', False)
-
-    return render_template(
-        'student.html',
-        student_name=student_name,
-        requests_list=requests_list,
-        otp_required=otp_required
-    )
+    return render_template("student.html", data=data, otp=session.get("otp_phase"))
 
 
-# ---------- HOD DASHBOARD ----------
-@app.route('/hod', methods=['GET', 'POST'])
+@app.route("/hod")
 def hod_dashboard():
-    if 'role' not in session or session['role'] != 'hod':
-        flash("Access denied. HOD only.", "danger")
-        return redirect(url_for('login'))
-
-    cur = mysql.connection.cursor()
-    cur.execute(
-        """
-        SELECT g.id,
-               g.student_id,
-               g.student_name,
-               g.reason,
-               g.out_date,
-               g.out_time,
-               g.status,
-               g.created_at
-        FROM gate_pass_requests AS g
-        ORDER BY g.created_at DESC
-        """
-    )
-    all_requests = cur.fetchall()
-    cur.close()
-
-    return render_template('hod.html', all_requests=all_requests)
+    if session.get("role") != "hod":
+        return redirect(url_for("login"))
+    requests = GatePassRequest.query.order_by(GatePassRequest.created_at.desc()).all()
+    return render_template("hod.html", requests=requests)
 
 
-# ---------- HOD: UPDATE STATUS + SMS + QR ON APPROVED ----------
-@app.route('/hod/update/<int:request_id>', methods=['POST'])
-def update_request_status(request_id):
-    if 'role' not in session or session['role'] != 'hod':
-        flash("Access denied. HOD only.", "danger")
-        return redirect(url_for('login'))
+@app.route("/hod/update/<int:id>", methods=["POST"])
+def update_request(id):
+    req = GatePassRequest.query.get(id)
+    action = request.form["action"]
 
-    action = request.form.get('action')  # "Approved" ya "Rejected"
+    if action == "Approved":
+        req.status = "Approved"
+        req.qr_token = uuid4().hex
+        req.qr_expires_at = datetime.utcnow() + timedelta(minutes=20)
+        req.qr_used = False
+    else:
+        req.status = "Rejected"
 
-    if action not in ['Approved', 'Rejected']:
-        flash("Invalid action.", "danger")
-        return redirect(url_for('hod_dashboard'))
-
-    cur = mysql.connection.cursor()
-
-    # ---------- If Rejected: sirf status update ----------
-    if action == 'Rejected':
-        cur.execute(
-            "UPDATE gate_pass_requests SET status = %s WHERE id = %s",
-            (action, request_id)
-        )
-        mysql.connection.commit()
-        cur.close()
-
-        flash(f"Request #{request_id} marked as {action}.", "success")
-        return redirect(url_for('hod_dashboard'))
-
-    # ---------- If Approved: status + QR token + expiry ----------
-    # Unique token & expiry 20 minutes later
-    token = uuid4().hex
-    expires_at = datetime.now() + timedelta(minutes=20)
-
-    cur.execute(
-        """
-        UPDATE gate_pass_requests
-        SET status = %s,
-            qr_token = %s,
-            qr_expires_at = %s,
-            qr_used = 0
-        WHERE id = %s
-        """,
-        (action, token, expires_at, request_id)
-    )
-    mysql.connection.commit()
-
-    # Fetch request details (student, date, time, etc.)
-    cur.execute(
-        """
-        SELECT student_id, student_name, reason, out_date, out_time
-        FROM gate_pass_requests
-        WHERE id = %s
-        """,
-        (request_id,)
-    )
-    req_row = cur.fetchone()
-
-    if not req_row:
-        cur.close()
-        flash("Request not found after update.", "danger")
-        return redirect(url_for('hod_dashboard'))
-
-    student_id = req_row[0]
-    student_name = req_row[1]
-    reason = req_row[2]
-    out_date = req_row[3]
-    out_time = req_row[4]
-
-    # Parent ka phone nikaalo
-    cur.execute(
-        "SELECT parents_phone FROM users WHERE id = %s",
-        (student_id,)
-    )
-    user_row = cur.fetchone()
-    cur.close()
-
-    parents_phone = None
-    if user_row:
-        parents_phone = user_row[0]
-
-    # SMS to parent that request is Approved (optional)
-    if parents_phone:
-        msg = (
-            f"Gate pass request (ID: {request_id}) of {student_name} "
-            f"for {out_date} {out_time} has been APPROVED by HOD."
-        )
-        send_sms(parents_phone, msg)
-
-    # (Optional) HOD ke liye QR page same rahe
-    verify_url = url_for("verify_qr", token=token, _external=True)
-    qr_code_data = generate_qr_code(verify_url)
-
-    return render_template(
-        "qr_page.html",
-        request_id=request_id,
-        student_name=student_name,
-        reason=reason,
-        out_date=out_date,
-        out_time=out_time,
-        qr_code_data=qr_code_data,
-        verify_url=verify_url,
-        qr_expires_at=expires_at
-    )
+    db.session.commit()
+    return redirect(url_for("hod_dashboard"))
 
 
-# ---------- QR VERIFY ROUTE ----------
-@app.route('/verify-qr/<string:token>')
+@app.route("/verify-qr/<token>")
 def verify_qr(token):
-    """
-    Guard QR scan karega -> is URL pe aayega.
-    Token se request find karo, expiry & used check karo.
-    """
-    cur = mysql.connection.cursor()
-    cur.execute(
-        """
-        SELECT id, student_name, reason, out_date, out_time, qr_expires_at, qr_used
-        FROM gate_pass_requests
-        WHERE qr_token = %s
-        """,
-        (token,)
-    )
-    row = cur.fetchone()
+    req = GatePassRequest.query.filter_by(qr_token=token).first()
 
-    if not row:
-        cur.close()
-        status = "invalid"
-        msg = "❌ Invalid QR Code. Gate pass not found."
-        return render_template("qr_result.html", status=status, msg=msg, gate_req=None)
+    if not req:
+        return render_template("qr_result.html", msg="Invalid QR")
 
-    req_id = row[0]
-    student_name = row[1]
-    reason = row[2]
-    out_date = row[3]
-    out_time = row[4]
-    qr_expires_at = row[5]
-    qr_used = row[6]
+    if req.qr_used:
+        return render_template("qr_result.html", msg="QR already used")
 
-    # Already used?
-    if qr_used:
-        cur.close()
-        status = "used"
-        msg = "⚠️ This QR code has already been used."
-        gate_req = {
-            "id": req_id,
-            "student_name": student_name,
-            "reason": reason,
-            "out_date": out_date,
-            "out_time": out_time,
-            "qr_expires_at": qr_expires_at
-        }
-        return render_template("qr_result.html", status=status, msg=msg, gate_req=gate_req)
+    if datetime.utcnow() > req.qr_expires_at:
+        return render_template("qr_result.html", msg="QR expired")
 
-    now = datetime.now()
-    if not qr_expires_at or now > qr_expires_at:
-        cur.close()
-        status = "expired"
-        msg = "⛔ This QR code has expired. Please contact the HOD."
-        gate_req = {
-            "id": req_id,
-            "student_name": student_name,
-            "reason": reason,
-            "out_date": out_date,
-            "out_time": out_time,
-            "qr_expires_at": qr_expires_at
-        }
-        return render_template("qr_result.html", status=status, msg=msg, gate_req=gate_req)
-
-    # Yaha tak aaya => QR valid hai, ab ek hi baar use hona chahiye
-    cur.execute(
-        "UPDATE gate_pass_requests SET qr_used = 1 WHERE id = %s",
-        (req_id,)
-    )
-    mysql.connection.commit()
-    cur.close()
-
-    status = "valid"
-    msg = "✅ Gate Pass Verified Successfully. Entry Allowed."
-    gate_req = {
-        "id": req_id,
-        "student_name": student_name,
-        "reason": reason,
-        "out_date": out_date,
-        "out_time": out_time,
-        "qr_expires_at": qr_expires_at
-    }
-    return render_template("qr_result.html", status=status, msg=msg, gate_req=gate_req)
+    req.qr_used = True
+    db.session.commit()
+    return render_template("qr_result.html", msg="Gate Pass Verified")
 
 
-# ---------- LOGOUT ----------
-@app.route('/logout')
+@app.route("/logout")
 def logout():
     session.clear()
-    flash("Logged out successfully.", "info")
-    return redirect(url_for('login'))
+    return redirect(url_for("login"))
 
-
-# ================== MAIN ==================
-if __name__ == '__main__':
+# =====================================================
+# MAIN
+# =====================================================
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
