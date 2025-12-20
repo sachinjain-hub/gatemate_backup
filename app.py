@@ -237,11 +237,13 @@ def student():
             qr = generate_qr_code(url)
         data.append({"r": r, "qr": qr})
 
-    return render_template(
-        "student.html",
-        data=data,
-        otp=session.get("otp_phase")
-    )
+   return render_template(
+    "student.html",
+    data=data,
+    otp=session.get("otp_phase"),
+    student_name=user.name   # ✅ ADD THIS
+)
+
 
 
 @app.route("/hod")
