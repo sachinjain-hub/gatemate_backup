@@ -7,3 +7,6 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
 
+
+Email: raj1@gmail.com
+Password: 1234
