@@ -24,16 +24,19 @@ from twilio.rest import Client
 # =====================================================
 app = Flask(__name__)
 
-# Secret key
+# ---------- SECRET & SESSION ----------
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev")
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=30)
+app.config["SESSION_COOKIE_SAMESITE"] = "None"
+app.config["SESSION_COOKIE_SECURE"] = True
 
-# ---------------- DATABASE CONFIG ----------------
+# =====================================================
+# DATABASE CONFIG (POSTGRES)
+# =====================================================
 DATABASE_URL = os.environ.get("DATABASE_URL")
-
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
 
-# Fix for postgres:// (Render/Railway)
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://")
 
@@ -44,16 +47,17 @@ db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
 # =====================================================
-# TWILIO CONFIG (FIXED & SAFE)
+# TWILIO CONFIG
 # =====================================================
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
 TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER")
 
-if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN or not TWILIO_FROM_NUMBER:
-    raise RuntimeError("Twilio environment variables are not set")
-
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+twilio_client = None
+if all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER]):
+    twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+else:
+    print("⚠️ Twilio disabled (env variables missing)")
 
 # =====================================================
 # DATABASE MODELS
@@ -65,10 +69,8 @@ class User(db.Model):
     name = db.Column(db.String(120), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password = db.Column(db.String(255), nullable=False)
-    parents_phone = db.Column(db.String(20))
+    parents_phone = db.Column(db.String(20), nullable=False)
     role = db.Column(db.String(20), default="student")
-
-    requests = db.relationship("GatePassRequest", backref="student", lazy=True)
 
 
 class GatePassRequest(db.Model):
@@ -100,15 +102,29 @@ class RegisterForm(FlaskForm):
 # =====================================================
 # HELPERS
 # =====================================================
+def format_phone(phone):
+    phone = phone.strip()
+    if phone.startswith("0"):
+        phone = phone[1:]
+    if not phone.startswith("+"):
+        phone = "+91" + phone
+    return phone
+
+
 def send_sms(phone, message):
+    if not twilio_client:
+        print("⚠️ SMS skipped (Twilio disabled)")
+        return
     try:
+        print("📨 Sending SMS to:", phone)
         twilio_client.messages.create(
             body=message,
             from_=TWILIO_FROM_NUMBER,
             to=phone
         )
+        print("✅ SMS SENT")
     except Exception as e:
-        print("Twilio Error:", e)
+        print("❌ Twilio Error:", e)
 
 
 def generate_qr_code(data):
@@ -116,7 +132,6 @@ def generate_qr_code(data):
     qr.add_data(data)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
-
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode()
@@ -133,9 +148,7 @@ def index():
 def register():
     form = RegisterForm()
     if form.validate_on_submit():
-        phone = form.parents_phone.data.strip()
-        if not phone.startswith("+"):
-            phone = "+91" + phone
+        phone = format_phone(form.parents_phone.data)
 
         hashed = bcrypt.hashpw(
             form.password.data.encode(),
@@ -165,12 +178,14 @@ def login():
             request.form["password"].encode(),
             user.password.encode()
         ):
+            session.permanent = True
             session["user_id"] = user.id
             session["role"] = user.role
             session["name"] = user.name
-            return redirect(url_for(
-                "hod_dashboard" if user.role == "hod" else "student"
-            ))
+
+            return redirect(
+                url_for("hod_dashboard") if user.role == "hod" else url_for("student")
+            )
 
         flash("Invalid credentials", "danger")
 
@@ -184,46 +199,53 @@ def student():
 
     user = User.query.get(session["user_id"])
 
-    if request.method == "POST":
-        # OTP verification phase
-        if session.get("otp_phase"):
-            if request.form.get("otp") != str(session.get("otp")):
-                flash("Invalid OTP", "danger")
-                return redirect(url_for("student"))
-
-            req = GatePassRequest(
-                student_id=user.id,
-                student_name=user.name,
-                **session.get("pending", {})
-            )
-            db.session.add(req)
-            db.session.commit()
-
-            session.pop("otp_phase", None)
-            session.pop("otp", None)
-            session.pop("pending", None)
-
-            flash("Gate pass submitted successfully", "success")
+    # ---------- OTP VERIFY ----------
+    if request.method == "POST" and session.get("otp_phase"):
+        if datetime.utcnow() > session.get("otp_expiry"):
+            flash("OTP expired", "danger")
+            session.clear()
             return redirect(url_for("student"))
 
-        # First submit → generate OTP
+        if request.form.get("otp") != str(session.get("otp")):
+            flash("Invalid OTP", "danger")
+            return redirect(url_for("student"))
+
+        req = GatePassRequest(
+            student_id=user.id,
+            student_name=user.name,
+            **session["pending"]
+        )
+        db.session.add(req)
+        db.session.commit()
+
+        session.pop("otp_phase")
+        session.pop("otp")
+        session.pop("pending")
+        session.pop("otp_expiry")
+
+        flash("Gate pass submitted successfully", "success")
+        return redirect(url_for("student"))
+
+    # ---------- SEND OTP ----------
+    if request.method == "POST":
         otp = random.randint(100000, 999999)
         session["otp"] = otp
         session["otp_phase"] = True
+        session["otp_expiry"] = datetime.utcnow() + timedelta(minutes=5)
         session["pending"] = {
             "reason": request.form["reason"],
             "out_date": request.form["out_date"],
             "out_time": request.form["out_time"]
         }
 
-        send_sms(user.parents_phone, f"OTP for gate pass: {otp}")
+        send_sms(user.parents_phone, f"OTP for gate pass is {otp}")
         flash("OTP sent to parent's mobile number", "info")
         return redirect(url_for("student"))
 
     requests = GatePassRequest.query.filter_by(student_id=user.id).all()
     now = datetime.utcnow()
-
     data = []
+
     for r in requests:
         qr = None
         if (
@@ -238,12 +260,11 @@ def student():
         data.append({"r": r, "qr": qr})
 
     return render_template(
-     "student.html",
-     data=data,
-     otp=session.get("otp_phase"),
-     student_name=user.name   # ✅ ADD THIS
+        "student.html",
+        data=data,
+        otp=session.get("otp_phase"),
+        student_name=user.name
     )
-
 
 
 @app.route("/hod")
@@ -267,6 +288,11 @@ def update_request(id):
         req.qr_token = uuid4().hex
         req.qr_expires_at = datetime.utcnow() + timedelta(minutes=20)
         req.qr_used = False
+
+        send_sms(
+            req.student.parents_phone,
+            f"Gate pass of {req.student_name} has been APPROVED"
+        )
     else:
         req.status = "Rejected"
 
@@ -279,7 +305,7 @@ def verify_qr(token):
     req = GatePassRequest.query.filter_by(qr_token=token).first()
 
     if not req:
-        return render_template("qr_result.html", msg="Invalid QR Code")
+        return render_template("qr_result.html", msg="Invalid QR")
 
     if req.qr_used:
         return render_template("qr_result.html", msg="QR already used")
@@ -289,16 +315,13 @@ def verify_qr(token):
 
     req.qr_used = True
     db.session.commit()
-    return render_template("qr_result.html", msg="Gate Pass Verified Successfully")
+    return render_template("qr_result.html", msg="Gate Pass Verified")
 
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect(url_for("login"))
-
-with app.app_context():
-    db.create_all()
 
 # =====================================================
 # MAIN
